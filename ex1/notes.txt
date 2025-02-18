@@ -1,0 +1,37 @@
+
+
+https://www.youtube.com/watch?v=bCz4OMemCcA&ab_channel=UmarJamil
+https://github.com/hkproj/transformer-from-scratch-notes/blob/main/Diagrams_V2.pdf
+
+https://www.youtube.com/watch?v=U0s0f995w14&ab_channel=AladdinPersson
+https://github.com/aladdinpersson/Machine-Learning-Collection/blob/master/ML/Pytorch/more_advanced/transformer_from_scratch/transformer_from_scratch.py
+
+
+Self-Attention: The relationships between a word to other words in the *same* sentence.
+
+example: seq_len = 6, dim_model = d_k = 512
+meaining: 6 word sentence with embedding vector size 512
+dim_model=d_k: only one attention head
+
+Query Key Value
+
+Attention(Q, K, V) = softmax( [Q*K^T / sqrt(d_model)] * V )
+
+Q (6, 512) * K^T (512, 6) ... reuse the same matrix!
+Q*K^T (6, 6) ... a 6x6 matrix showing the reltionship scores between each word embedding in 
+the sentence.
+
+V (6, 512) .. reuse the same matrix again!
+
+Q*K^T (6, 6) * V (6, 512) = Attention (6, 512)
+
+Attention (6, 512) represents the relationship scores between each word embedding in the 
+sentence to all the word embeddings of the entire vocabulary
+
+
+Self-Attention :
+is permutation invariant.
+requires no parameters
+
+
+
