@@ -1,74 +1,74 @@
 import torch
 import torch.nn as nn
 
-#
-# Attention(Q, K, V) = softmax( (Q * K^T)/sqrt(d_k) ) * V
-#
-# head_i = Attention(Q * W_i^Q, K * W_i^K, V * W_i^V )
-#
-# Multihead(Q, K, V) = Concat(all head_i) * W^O
-#
-#
-# Q K and V are originally passed in with shape: (N, seq_len, embed_size)
-# We want to slice them up for multihead attention, so:
-#
-#              d_model                  d_k                 d_k
-#           *-----------*            *-------*           *-------*
-#           |           |            |       |           |       |
-#   seq_len |           |    d_model |       |   seq_len |       |
-#           |     Q     |            | W_i^Q |           | Q_i'  |
-#           |           | DOT        |       | =         |       |
-#           |           |            |       |           |       |
-#           *-----------*            *-------*           *-------*
-#
-#              d_model                  d_k                 d_k
-#           *-----------*            *-------*           *-------*
-#           |           |            |       |           |       |
-#   seq_len |           |    d_model |       |   seq_len |       |
-#           |     K     |            | W_i^K |           | K_i'  |
-#           |           | DOT        |       | =         |       |
-#           |           |            |       |           |       |
-#           *-----------*            *-------*           *-------*
-#
-#              d_model                  d_k                 d_k
-#           *-----------*            *-------*           *-------*
-#           |           |            |       |           |       |
-#   seq_len |           |    d_model |       |   seq_len |       |
-#           |     V     |            | W_i^V |           | V_i'  |
-#           |           | DOT        |       | =         |       |
-#           |           |            |       |           |       |
-#           *-----------*            *-------*           *-------*
-#
-#              d_k                                           seq_len
-#           *-------*               seq_len               *-----------*
-#           |       |            *------------*           |           |
-#   seq_len |       |        d_k |            |   seq_len |           |
-#           | Q_i^Q |            |   K_i'^T   |           |  SCORES   |
-#           |       | DOT        |            | =         |           |
-#           |       |            *------------*           |           |
-#           *-------*                                     *-----------*
-#
-#              seq_len                  d_k                 d_k   
-#           *-----------*            *-------*           *-------*
-#           |           |            |       |           |       |
-#   seq_len |           |    seq_len |       |   seq_len |       |
-#           |  SCORES   |            | V_i'  |           |head_i |
-#           |           | DOT        |       | =         |       |
-#           |           |            |       |           |       |
-#           *-----------*            *-------*           *-------*
-#
+"""
+
+Attention(Q, K, V) = softmax( (Q * K^T)/sqrt(d_k) ) * V
+
+head_i = Attention(Q * W_i^Q, K * W_i^K, V * W_i^V )
+
+Multihead(Q, K, V) = Concat(all head_i) * W^O
+
+
+Q K and V are originally passed in with shape: (N, seq_len, embed_size)
+We want to slice them up for multihead attention, so:
+
+               d_model                  d_k                 d_k
+            *-----------*            *-------*           *-------*
+            |           |            |       |           |       |
+    seq_len |           |    d_model |       |   seq_len |       |
+            |     Q     |            | W_i^Q |           | Q_i'  |
+            |           | DOT        |       | =         |       |
+            |           |            |       |           |       |
+            *-----------*            *-------*           *-------*
+
+               d_model                  d_k                 d_k
+            *-----------*            *-------*           *-------*
+            |           |            |       |           |       |
+    seq_len |           |    d_model |       |   seq_len |       |
+            |     K     |            | W_i^K |           | K_i'  |
+            |           | DOT        |       | =         |       |
+            |           |            |       |           |       |
+            *-----------*            *-------*           *-------*
+
+               d_model                  d_k                 d_k
+            *-----------*            *-------*           *-------*
+            |           |            |       |           |       |
+    seq_len |           |    d_model |       |   seq_len |       |
+            |     V     |            | W_i^V |           | V_i'  |
+            |           | DOT        |       | =         |       |
+            |           |            |       |           |       |
+            *-----------*            *-------*           *-------*
+
+               d_k                                           seq_len
+            *-------*               seq_len               *-----------*
+            |       |            *------------*           |           |
+    seq_len |       |        d_k |            |   seq_len |           |
+            | Q_i^Q |            |   K_i'^T   |           |  SCORES   |
+            |       | DOT        |            | =         |           |
+            |       |            *------------*           |           |
+            *-------*                                     *-----------*
+
+               seq_len                  d_k                 d_k   
+            *-----------*            *-------*           *-------*
+            |           |            |       |           |       |
+    seq_len |           |    seq_len |       |   seq_len |       |
+            |  SCORES   |            | V_i'  |           |head_i |
+            |           | DOT        |       | =         |       |
+            |           |            |       |           |       |
+            *-----------*            *-------*           *-------*
+
+"""
 
 class SelfAttention(nn.Module):
     def __init__(self, embed_size, num_heads):
-        super(SelfAttention, self).__init__()
+        super().__init__()
         self.embed_size = embed_size
         self.head_dim = embed_size // num_heads # integer division
 
         assert(self.head_dim * num_heads == embed_size), "embed_size must be divisible by num_heads"
 
-        #
         # https://pytorch.org/docs/stable/generated/torch.nn.Linear.html
-        #
         self.values     = nn.Linear(self.head_dim, self.head_dim, bias=False)
         self.keys       = nn.Linear(self.head_dim, self.head_dim, bias=False)
         self.queries    = nn.Linear(self.head_dim, self.head_dim, bias=False)
@@ -82,15 +82,14 @@ class SelfAttention(nn.Module):
         keys    =   keys.reshape(num_examples, key_len,   self.num_heads, self.head_dim)
         queries =  query.reshape(num_examples, key_len,   self.num_heads, self.head_dim)
 
-
         # queries shape: (num_examples, query_len, num_heads, head_dim)
         # keys shape:    (num_examples, key_len,   num_heads, head_dim)
         # scores shape:  (num_examples, num_heads, num_heads, key_len )
-        # scores = torch.einsum("sqhd, skhd -> shqk", [queries, keys])
+        # scores = torch.einsum("nqhd, nkhd -> nhqk", [queries, keys])
 
         # naive aproach for edu purposes
         scores = torch.zeros(size=(num_examples, self.num_heads, query_len, key_len))
-        for s in range(num_examples): # loop over token embeddings in sequence
+        for n in range(num_examples): # loop over token embeddings in sequence
             for h in range(self.num_heads): # loop over attention heads
                 # naive matmul, store score
                 for q_idx in range(query_len):
@@ -98,8 +97,8 @@ class SelfAttention(nn.Module):
                         # dot product
                         dot_val = 0.0
                         for d_idx in range(self.head_dim): # d_k
-                            dot_val += queries[s, q_idx, h, d_idx] * keys[s, k_idx, h, d_idx]
-                        scores[s, h, q_idx, k_idx] = dot_val
+                            dot_val += queries[n, q_idx, h, d_idx] * keys[n, k_idx, h, d_idx]
+                        scores[n, h, q_idx, k_idx] = dot_val
 
         # queries shape: (num_examples, query_len, num_heads, head_dim)
         # keys shape:    (num_examples, key_len,   num_heads, head_dim)
@@ -124,13 +123,15 @@ class SelfAttention(nn.Module):
 
         # Fully connected layer
         out = self.fc_out(out)
+        # out shape: (num_examples, query_len, embed_size)
+        
         return out
 
 
 
 class TransformerBlock(nn.Module):
     def __init__(self, embed_size, num_heads, dropout, forward_expansion):
-        super(TransformerBlock, self).__init__()
+        super().__init__()
         self.attention = SelfAttention(embed_size, num_heads)
         self.norm1 = nn.LayerNorm(embed_size)
         self.norm2 = nn.LayerNorm(embed_size)
@@ -164,7 +165,7 @@ class Encoder(nn.Module):
         dropout,
         max_length
     ):
-        super(Encoder, self).__init__()
+        super().__init__()
         self.embed_size = embed_size
         self.device = device
         self.word_embedding = nn.Embedding(src_vocab_size, embed_size)
@@ -182,6 +183,81 @@ class Encoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask):
+        num_examples, seq_len = x.shape
+        positions = torch.arange(0, seq_len).expand(num_examples, seq_len).to(self.device)
+        # example:
+        # positions = torch.arange(0, 5)
+        #   [0, 1, 2, 3, 4]
+        # positions = positions.expand(3, 5) 
+        #   tensor([
+        #       [0, 1, 2, 3, 4],
+        #       [0, 1, 2, 3, 4],
+        #       [0, 1, 2, 3, 4]
+        #   ])
+        #
+        out = self.dropout(
+            (self.word_embedding(x) + self.position_embedding(positions))
+        )
+
+        # In the Encoder, Q, K, V are all the same matrix
+        for layer in self.layers:
+            out = layer(out, out, out, mask)
+
+        return out
+
+class DecoderBlock(nn.Module):
+    def __init__(self, embed_size, num_heads, forward_expansion, dropout, device):
+        super().__init__()
+        self.norm = nn.LayerNorm(embed_size)
+        self.attention = SelfAttention(embed_size, num_heads)
+        self.transformer_block = TransformerBlock(
+            embed_size, num_heads, dropout, forward_expansion
+        )
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, value, key, src_mask, trg_mask):
+        attention = self.attention(x, x, x, trg_mask)
+        query = self.dropout(self.norm(attention + x))
+        out = self.transformer_block(value, key, query, src_mask)
+        return out
+
+class Decoder(nn.Module):
+    def __init__(
+        self,
+        trg_vocab_size,
+        embed_size,
+        num_layers,
+        num_heads,
+        forward_expansion,
+        dropout,
+        device,
+        max_length
+    ):
+        super().__init__()
+        self.device = device
+        self.word_embedding = nn.Embedding(trg_vocab_size, embed_size)
+        self.positional_embedding = nn.Embedding(max_length, embed_size)
+
+        self.layers = nn.ModuleList(
+            [
+                DecoderBlock(embed_size, num_heads, forward_expansion, dropout, device)
+                for _ in range(num_layers)
+            ]
+        )
+        self.fc_out = nn.Linear(embed_size, trg_vocab_size)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, enc_out, src_mask, trg_mask):
+        num_examples, seq_len = x.shape
+        positions = torch.arange(0, seq_len).expand(num_examples, seq_len).to(self.device)
+        x = self.dropout((self.word_embedding(x) + self.positional_embedding(positions)))
+
+        for layer in self.layers:
+            x = layer(x, enc_out, enc_out, src_mask, trg_mask)
+
+        out = self.fc_out(x)
+
+        return out
 
 
 
