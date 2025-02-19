@@ -75,22 +75,22 @@ class SelfAttention(nn.Module):
         self.fc_out     = nn.Linear(num_heads * self.head_dim, embed_size)
 
     def forward(self, values, keys, query, mask):
-        seq_len = query.shape[0] # length of input sequence (sequence of embeddings)
+        num_examples = query.shape[0] # number of training examples
         value_len, key_len, query_len = values.shape[1], keys.shape[1], query.shape[1]
 
-        values  = values.reshape(seq_len, value_len, self.num_heads, self.head_dim)
-        keys    =   keys.reshape(seq_len, key_len,   self.num_heads, self.head_dim)
-        queries =  query.reshape(seq_len, key_len,   self.num_heads, self.head_dim)
+        values  = values.reshape(num_examples, value_len, self.num_heads, self.head_dim)
+        keys    =   keys.reshape(num_examples, key_len,   self.num_heads, self.head_dim)
+        queries =  query.reshape(num_examples, key_len,   self.num_heads, self.head_dim)
 
 
-        # queries shape: (seq_len, query_len, num_heads, head_dim)
-        # keys shape:    (seq_len, key_len,   num_heads, head_dim)
-        # scores shape:  (seq_len, num_heads, num_heads, key_len )
+        # queries shape: (num_examples, query_len, num_heads, head_dim)
+        # keys shape:    (num_examples, key_len,   num_heads, head_dim)
+        # scores shape:  (num_examples, num_heads, num_heads, key_len )
         # scores = torch.einsum("sqhd, skhd -> shqk", [queries, keys])
 
         # naive aproach for edu purposes
-        scores = torch.zeros(size=(seq_len, self.num_heads, query_len, key_len))
-        for s in range(seq_len): # loop over token embeddings in sequence
+        scores = torch.zeros(size=(num_examples, self.num_heads, query_len, key_len))
+        for s in range(num_examples): # loop over token embeddings in sequence
             for h in range(self.num_heads): # loop over attention heads
                 # naive matmul, store score
                 for q_idx in range(query_len):
@@ -101,14 +101,26 @@ class SelfAttention(nn.Module):
                             dot_val += queries[s, q_idx, h, d_idx] * keys[s, k_idx, h, d_idx]
                         scores[s, h, q_idx, k_idx] = dot_val
 
+        # queries shape: (num_examples, query_len, num_heads, head_dim)
+        # keys shape:    (num_examples, key_len,   num_heads, head_dim)
+        # scores:        (num_examples, num_heads, query_len, key_len)
+
+        # Causality: the transformer must only work with present or previously ween words.
         if mask is not None:
             scores = scores.masked_fill(mask == 0, float("-1e20"))
 
+        # Normalize the scores
         attention = torch.softmax(scores / (self.embed_size ** (1/2)), dim=3)
+        # attention shape: (num_examples, num_heads, query_len, key_len)
 
         out = torch.einsum("shql, slhd -> sqhd", [attention, values]).reshape(
-            seq_len, query_len, self.heads * self.head_dim
+            num_examples, query_len, self.heads * self.head_dim
         )
+
+        # attention shape: (num_examples, num_heads, query_len, key_len)
+        # values shape: (num_examples, value_len, num_heads, head_dim)
+        # out after matrix multiply: (N, query_len, num_heads, head_dim), then
+        # we reshape and flatten the last two dimensions.
 
         # Fully connected layer
         out = self.fc_out(out)
@@ -157,5 +169,20 @@ class Encoder(nn.Module):
         self.device = device
         self.word_embedding = nn.Embedding(src_vocab_size, embed_size)
         self.position_embedding = nn.Embedding(max_length, embed_size)
+
+        self.layers = nn.ModuleList(
+            [
+                TransformerBlock(
+                    embed_size, num_heads, dropout=dropout, forward_expansion=forward_expansion
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, mask):
+
+
 
 
