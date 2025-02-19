@@ -2,6 +2,19 @@ import torch
 import torch.nn as nn
 
 
+# Q K and V are originally passed in with shape: (N, seq_len, embed_size)
+# We want to split them up for multihead attention, so:
+#
+#
+#              d_model                  d_k                        d_k
+#           *-----------*            *-------*                  *-------*
+#           |           |            |       |                  |       |
+#   seq_len |           |    d_model |       |          seq_len |       |
+#           |     Q     |            | W_i^Q |                  | Q_i'  |
+#           |           | DOT        |       | = CONCAT(        |       | ), i=1...num_heads
+#           |           |            |       |                  |       |
+#           *-----------*            *-------*                  *-------*
+#
 
 class SelfAttention(nn.Module):
     def __init__(self, embed_size, num_heads):
@@ -20,41 +33,45 @@ class SelfAttention(nn.Module):
         self.fc_out     = nn.Linear(num_heads * self.head_dim, embed_size)
 
     def forward(self, values, keys, query, mask):
-        N = query.shape[0]
+        seq_len = query.shape[0] # length of input sequence (sequence of embeddings)
         value_len, key_len, query_len = values.shape[1], keys.shape[1], query.shape[1]
 
-        # Split embedding vector into self.heads subvectors
-        # N = batch size
-        # value_len = length dimension for values
-        #
-        values  = values.reshape(N, value_len, self.num_heads, self.head_dim)
-        keys    =   keys.reshape(N, key_len,   self.num_heads, self.head_dim)
-        queries =  query.reshape(N, key_len,   self.num_heads, self.head_dim)
+        values  = values.reshape(seq_len, value_len, self.num_heads, self.head_dim)
+        keys    =   keys.reshape(seq_len, key_len,   self.num_heads, self.head_dim)
+        queries =  query.reshape(seq_len, key_len,   self.num_heads, self.head_dim)
 
 
-        # queries shape:    (N, query_len, num_heads, heads_dim)
-        # keys shape:       (N, key_len,   num_heads, heads_dim)
-        # energy shape:     (N, num_heads, num_heads, key_len  )
-        score = torch.einsum("nqhd, nkhd -> nhqk", [queries, keys])
-        # score shape:      (N, N)
+        # queries shape: (seq_len, query_len, num_heads, head_dim)
+        # keys shape:    (seq_len, key_len,   num_heads, head_dim)
+        # scores shape:  (seq_len, num_heads, num_heads, key_len )
+        # scores = torch.einsum("sqhd, skhd -> shqk", [queries, keys])
 
-        # masked attentions
+        # naive aproach for edu purposes
+        scores = torch.zeros(size=(seq_len, self.num_heads, query_len, key_len))
+        for s in range(seq_len): # loop over token embeddings in sequence
+            for h in range(self.num_heads): # loop over attention heads
+                # naive matmul, store score
+                for q_idx in range(query_len):
+                    for k_idx in range(key_len):
+                        # dot product
+                        dot_val = 0.0
+                        for d_idx in range(self.head_dim): # d_k
+                            dot_val += queries[s, q_idx, h, d_idx] * keys[s, k_idx, h, d_idx]
+                        scores[s, h, q_idx, k_idx] = dot_val
+
         if mask is not None:
-            score = score.masked_fill(mask == 0, float("-1e20"))
+            scores = scores.masked_fill(mask == 0, float("-1e20"))
 
-        # Attention
-        attention = torch.softmax(score / (self.embed_size ** (1/2)), dim=3)
+        attention = torch.softmax(scores / (self.embed_size ** (1/2)), dim=3)
 
-        # attention shape:  (N, num_heads, query_len, key_len   )
-        # values shape:     (N, value_len, num_heads, heads_dim )
-        out = torch.einsum("nhql, nlhd -> nqhd", [attention, values]).reshape(
-            N, query_len, self.heads * self.head_dim
+        out = torch.einsum("shql, slhd -> sqhd", [attention, values]).reshape(
+            seq_len, query_len, self.heads * self.head_dim
         )
-        # out shape:        (N, query_len, num_heads, head_dim  ) then flatten last two dimensions
 
         # Fully connected layer
         out = self.fc_out(out)
         return out
+
 
 
 class TransformerBlock(nn.Module):
@@ -73,9 +90,30 @@ class TransformerBlock(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, value, key, query, mask):
-        ...
+        attention = self.attention(value, key, query, mask)
 
-    ...
+        x = self.dropout(self.norm1(attention + query))
+        forward = self.feed_forward(x)
+        out = self.dropout(self.norm2(forward + x))
+        return out
 
+
+class Encoder(nn.Module):
+    def __init__(
+        self,
+        src_vocab_size,
+        embed_size,
+        num_layers,
+        num_heads,
+        device,
+        forward_expansion,
+        dropout,
+        max_length
+    ):
+        super(Encoder, self).__init__()
+        self.embed_size = embed_size
+        self.device = device
+        self.word_embedding = nn.Embedding(src_vocab_size, embed_size)
+        self.position_embedding = nn.Embedding(max_length, embed_size)
 
 
