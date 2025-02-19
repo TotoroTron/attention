@@ -1,19 +1,61 @@
 import torch
 import torch.nn as nn
 
-
+#
+# Attention(Q, K, V) = softmax( (Q * K^T)/sqrt(d_k) ) * V
+#
+# head_i = Attention(Q * W_i^Q, K * W_i^K, V * W_i^V )
+#
+# Multihead(Q, K, V) = Concat(all head_i) * W^O
+#
+#
 # Q K and V are originally passed in with shape: (N, seq_len, embed_size)
-# We want to split them up for multihead attention, so:
+# We want to slice them up for multihead attention, so:
 #
+#              d_model                  d_k                 d_k
+#           *-----------*            *-------*           *-------*
+#           |           |            |       |           |       |
+#   seq_len |           |    d_model |       |   seq_len |       |
+#           |     Q     |            | W_i^Q |           | Q_i'  |
+#           |           | DOT        |       | =         |       |
+#           |           |            |       |           |       |
+#           *-----------*            *-------*           *-------*
 #
-#              d_model                  d_k                        d_k
-#           *-----------*            *-------*                  *-------*
-#           |           |            |       |                  |       |
-#   seq_len |           |    d_model |       |          seq_len |       |
-#           |     Q     |            | W_i^Q |                  | Q_i'  |
-#           |           | DOT        |       | = CONCAT(        |       | ), i=1...num_heads
-#           |           |            |       |                  |       |
-#           *-----------*            *-------*                  *-------*
+#              d_model                  d_k                 d_k
+#           *-----------*            *-------*           *-------*
+#           |           |            |       |           |       |
+#   seq_len |           |    d_model |       |   seq_len |       |
+#           |     K     |            | W_i^K |           | K_i'  |
+#           |           | DOT        |       | =         |       |
+#           |           |            |       |           |       |
+#           *-----------*            *-------*           *-------*
+#
+#              d_model                  d_k                 d_k
+#           *-----------*            *-------*           *-------*
+#           |           |            |       |           |       |
+#   seq_len |           |    d_model |       |   seq_len |       |
+#           |     V     |            | W_i^V |           | V_i'  |
+#           |           | DOT        |       | =         |       |
+#           |           |            |       |           |       |
+#           *-----------*            *-------*           *-------*
+#
+#              d_k                                           seq_len
+#           *-------*               seq_len               *-----------*
+#           |       |            *------------*           |           |
+#   seq_len |       |        d_k |            |   seq_len |           |
+#           | Q_i^Q |            |   K_i'^T   |           |  SCORES   |
+#           |       | DOT        |            | =         |           |
+#           |       |            *------------*           |           |
+#           *-------*                                     *-----------*
+#
+#              seq_len                  d_k                 d_k   
+#           *-----------*            *-------*           *-------*
+#           |           |            |       |           |       |
+#   seq_len |           |    seq_len |       |   seq_len |       |
+#           |  SCORES   |            | V_i'  |           |head_i |
+#           |           | DOT        |       | =         |       |
+#           |           |            |       |           |       |
+#           *-----------*            *-------*           *-------*
 #
 
 class SelfAttention(nn.Module):
