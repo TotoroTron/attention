@@ -10,53 +10,53 @@ head_i = Attention(Q * W_i^Q, K * W_i^K, V * W_i^V )
 Multihead(Q, K, V) = Concat(all head_i) * W^O
 
 
-Q K and V are originally passed in with shape: (N, seq_len, embed_size)
+Q K and V are originally passed in with shape: (num_examples, seq_len, embed_size)
 We want to slice them up for multihead attention, so:
 
                d_model                  d_k                 d_k
-            *-----------*            *-------*           *-------*
-            |           |            |       |           |       |
-    seq_len |           |    d_model |       |   seq_len |       |
-            |     Q     |            | W_i^Q |           | Q_i'  |
-            |           | DOT        |       | =         |       |
-            |           |            |       |           |       |
-            *-----------*            *-------*           *-------*
+            *-----------*            *--------*           *--------*
+            |           |            |        |           |        |
+    seq_len |           |    d_model |        |   seq_len |        |
+            |     Q     |            | W_i^Q  |           |  Q_i'  |
+            |           | DOT        |        | =         |        |
+            |           |            |        |           |        |
+            *-----------*            *--------*           *--------*
 
                d_model                  d_k                 d_k
-            *-----------*            *-------*           *-------*
-            |           |            |       |           |       |
-    seq_len |           |    d_model |       |   seq_len |       |
-            |     K     |            | W_i^K |           | K_i'  |
-            |           | DOT        |       | =         |       |
-            |           |            |       |           |       |
-            *-----------*            *-------*           *-------*
+            *-----------*            *--------*           *--------*
+            |           |            |        |           |        |
+    seq_len |           |    d_model |        |   seq_len |        |
+            |     K     |            | W_i^K  |           |  K_i'  |
+            |           | DOT        |        | =         |        |
+            |           |            |        |           |        |
+            *-----------*            *--------*           *--------*
 
                d_model                  d_k                 d_k
-            *-----------*            *-------*           *-------*
-            |           |            |       |           |       |
-    seq_len |           |    d_model |       |   seq_len |       |
-            |     V     |            | W_i^V |           | V_i'  |
-            |           | DOT        |       | =         |       |
-            |           |            |       |           |       |
-            *-----------*            *-------*           *-------*
+            *-----------*            *--------*           *--------*
+            |           |            |        |           |        |
+    seq_len |           |    d_model |        |   seq_len |        |
+            |     V     |            | W_i^V  |           |  V_i'  |
+            |           | DOT        |        | =         |        |
+            |           |            |        |           |        |
+            *-----------*            *--------*           *--------*
 
                d_k                                           seq_len
-            *-------*               seq_len               *-----------*
-            |       |            *------------*           |           |
-    seq_len |       |        d_k |            |   seq_len |           |
-            | Q_i^Q |            |   K_i'^T   |           | scores_i  |
-            |       | DOT        |            | =         |           |
-            |       |            *------------*           |           |
-            *-------*                                     *-----------*
+            *--------*               seq_len               *-----------*
+            |        |            *------------*           |           |
+    seq_len |        |        d_k |            |   seq_len |           |
+            | Q_i^Q  |            |   K_i'^T   |           | scores_i  |
+            |        | DOT        |            | =         |           |
+            |        |            *------------*           |           |
+            *--------*                                     *-----------*
 
-               seq_len                  d_k                 d_k   
-            *-----------*            *-------*           *-------*
-            |           |            |       |           |       |
-    seq_len |           |    seq_len |       |   seq_len |       |
-            | scores_i  |            | V_i'  |           |head_i |
-            |           | DOT        |       | =         |       |
-            |           |            |       |           |       |
-            *-----------*            *-------*           *-------*
+               seq_len                  d_k                 d_k
+            *-----------*            *--------*           *--------*
+            |           |            |        |           |        |
+    seq_len |           |    seq_len |        |   seq_len |        |
+            | scores_i  |            |  V_i'  |           | head_i |
+            |           | DOT        |        | =         |        |
+            |           |            |        |           |        |
+            *-----------*            *--------*           *--------*
 
 """
 
@@ -76,7 +76,12 @@ class SelfAttention(nn.Module):
         self.fc_out     = nn.Linear(num_heads * self.head_dim, embed_size)
 
     def forward(self, values, keys, query, mask):
-        num_examples = query.shape[0] # number of training examples
+        """
+        values, keys, queries shape: (batch_size, seq_len, embed_size)
+        mask shape: (batch_size, 1, 1, seq_len) for some attention masking scenarios
+        """
+
+        num_examples = query.shape[0] # number of training examples (aka batch size)
         value_len, key_len, query_len = values.shape[1], keys.shape[1], query.shape[1]
 
         values  = values.reshape(num_examples, value_len, self.num_heads, self.head_dim)
@@ -86,14 +91,27 @@ class SelfAttention(nn.Module):
         # queries shape: (num_examples, query_len, num_heads, head_dim)
         # keys shape:    (num_examples, key_len,   num_heads, head_dim)
         # scores shape:  (num_examples, num_heads, num_heads, key_len )
-        scores = torch.einsum("nqhd, nkhd -> nhqk", [queries, keys])
 
+        # scores = torch.einsum("nqhd, nkhd -> nhqk", [queries, keys])
+        # or equivalently... (for clarity, not speed)
+        # naive matmul
+        scores = torch.zeros(
+            (num_examples, self.num_heads, query_len, key_len),
+            device=queries.device,
+            dtype=queries.dtype
+        )
+        for n in range(num_examples):
+            for h in range(self.num_heads):
+                # (query_len, head_dim) @ (head_dim, key_len) -> (query_len, key_len)
+                q = queries[n, :, h, :] # shape (query_len, head_dim)
+                k = keys[n, :, h, :].transpose(0, 1) # shape (head_dim, key_len)
+                scores[n, h] = q @ k
 
         # queries shape: (num_examples, query_len, num_heads, head_dim)
         # keys shape:    (num_examples, key_len,   num_heads, head_dim)
         # scores:        (num_examples, num_heads, query_len, key_len)
 
-        # Causality: the transformer must only work with present or previously ween words.
+        # Causality: the transformer must only work with present or previously seen words.
         if mask is not None:
             scores = scores.masked_fill(mask == 0, float("-1e20"))
 
@@ -355,7 +373,6 @@ if __name__ == "__main__":
     ).to(device)
     out = model(x, trg[:, :-1])
     print(out.shape)
-    print(out)
 
 
 
