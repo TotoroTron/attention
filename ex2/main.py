@@ -33,6 +33,7 @@ class SelfAttention(nn.Module):
         queries =  queries.reshape(num_examples, self.num_heads, query_len, self.head_dim)
 
         # calculate scores for each example for each head
+        # scores = torch.einsum("nhqd, nhkd -> nhqk", queries, keys)
         scores = torch.zeros(
             (num_examples, self.num_heads, query_len, key_len),
             device=queries.device,
@@ -51,6 +52,7 @@ class SelfAttention(nn.Module):
         scaled_scores = torch.softmax(scores / (self.embed_size ** (1/2)), dim=3)
 
         # calculate attention for each example for each head
+        # attention = torch.einsum("nhqk, nhkd -> nhqd", scaled_scores, values)
         attention = torch.zeros(
             (num_examples, self.num_heads, query_len, self.head_dim),
             device = queries.device,
