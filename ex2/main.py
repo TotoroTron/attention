@@ -3,6 +3,17 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+"""
+x = torch.tensor([[1, 2, 3],
+                [4, 5, 6]])       # shape (2, 3)
+
+y = x.reshape(3, 2)               # shape (3, 2)
+print(y)
+
+tensor([[1, 2],
+        [3, 4],
+        [5, 6]])
+"""
 
 class SelfAttention(nn.Module):
     def __init__(self, embed_size, num_heads):
@@ -13,24 +24,25 @@ class SelfAttention(nn.Module):
 
         assert(self.head_dim * num_heads == embed_size), "embed_size must be divisible by num_heads"
 
-        self.values     = nn.Linear(embed_size, embed_size)
-        self.keys       = nn.Linear(embed_size, embed_size)
-        self.queries    = nn.Linear(embed_size, embed_size)
-        self.fc_out     = nn.Linear(embed_size, embed_size)
+        self.values  = nn.Linear(embed_size, embed_size)
+        self.keys    = nn.Linear(embed_size, embed_size)
+        self.queries = nn.Linear(embed_size, embed_size)
+        self.fc_out  = nn.Linear(embed_size, embed_size)
 
     def forward(self, values, keys, query, mask):
         num_examples = query.shape[0] # number of training examples (aka batch size)
         value_len, key_len, query_len = values.shape[1], keys.shape[1], query.shape[1]
 
         # init Q K V
-        values = self.values(values)  # (N, value_len, embed_size)
-        keys = self.keys(keys)  # (N, key_len, embed_size)
+        values  = self.values(values)  # (N, value_len, embed_size)
+        keys    = self.keys(keys)  # (N, key_len, embed_size)
         queries = self.queries(query)  # (N, query_len, embed_size)
 
         # slice up Q K V for multihead attention
-        values  = values.reshape(num_examples, self.num_heads, value_len, self.head_dim)
-        keys    =   keys.reshape(num_examples, self.num_heads, key_len,   self.head_dim)
+        values  =   values.reshape(num_examples, self.num_heads, value_len, self.head_dim)
+        keys    =     keys.reshape(num_examples, self.num_heads, key_len,   self.head_dim)
         queries =  queries.reshape(num_examples, self.num_heads, query_len, self.head_dim)
+
 
         # calculate scores for each example for each head
         # scores = torch.einsum("nhqd, nhkd -> nhqk", queries, keys)
@@ -55,7 +67,7 @@ class SelfAttention(nn.Module):
         # attention = torch.einsum("nhqk, nhkd -> nhqd", scaled_scores, values)
         attention = torch.zeros(
             (num_examples, self.num_heads, query_len, self.head_dim),
-            device = queries.device,
+            device=queries.device,
             dtype=queries.dtype
         )
         for n in range(num_examples):
@@ -241,6 +253,16 @@ class Transformer(nn.Module):
         return src_mask.to(self.device)
 
 
+    # tril: return lower triangular half, set other all else to zero
+    # expand: repeat singleton dimensions
+    """
+    x = torch.tensor([[1], [2], [3]])  # shape (3, 1)
+    y = x.expand(3, 4)                 # shape (3, 4)
+    print(y)
+    tensor([[1, 1, 1, 1],
+            [2, 2, 2, 2],
+            [3, 3, 3, 3]])
+    """
     def make_trg_mask(self, trg):
         num_examples, trg_len = trg.shape
         trg_mask = torch.tril(torch.ones((trg_len, trg_len))).expand(
