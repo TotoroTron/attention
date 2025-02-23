@@ -22,14 +22,17 @@ class SelfAttention(nn.Module):
         num_examples = query.shape[0] # number of training examples (aka batch size)
         value_len, key_len, query_len = values.shape[1], keys.shape[1], query.shape[1]
 
+        # init Q K V
         values = self.values(values)  # (N, value_len, embed_size)
         keys = self.keys(keys)  # (N, key_len, embed_size)
         queries = self.queries(query)  # (N, query_len, embed_size)
 
+        # slice up Q K V for multihead attention
         values  = values.reshape(num_examples, self.num_heads, value_len, self.head_dim)
         keys    =   keys.reshape(num_examples, self.num_heads, key_len,   self.head_dim)
         queries =  queries.reshape(num_examples, self.num_heads, query_len, self.head_dim)
 
+        # calculate scores for each example for each head
         scores = torch.zeros(
             (num_examples, self.num_heads, query_len, key_len),
             device=queries.device,
@@ -42,10 +45,12 @@ class SelfAttention(nn.Module):
                 k = keys[n, h, :, :] # shape (key_len, head_dim)
                 scores[n, h] = q @ k.transpose(0, 1) # shape (query_len, key_len)
 
+        # mask and scale scores
         if mask is not None:
             scores = scores.masked_fill(mask == 0, float("-1e20"))
         scaled_scores = torch.softmax(scores / (self.embed_size ** (1/2)), dim=3)
 
+        # calculate attention for each example for each head
         attention = torch.zeros(
             (num_examples, self.num_heads, query_len, self.head_dim),
             device = queries.device,
@@ -59,6 +64,8 @@ class SelfAttention(nn.Module):
 
         # concatenate the heads back together
         out = attention.reshape(num_examples, query_len, self.num_heads * self.head_dim)
+
+        # output projection of concatenated heads back into original embedding dimension
         out = self.fc_out(out)
         return out
 
