@@ -1,65 +1,8 @@
+
 import numpy as np
 import torch
 import torch.nn as nn
 
-"""
-
-Attention(Q, K, V) = softmax( (Q * K^T)/sqrt(d_k) ) * V
-
-head_i = Attention(Q * W_i^Q, K * W_i^K, V * W_i^V )
-
-Multihead(Q, K, V) = Concat(all head_i) * W^O
-
-
-Q K and V are originally passed in with shape: (num_examples, seq_len, embed_size)
-We want to slice them up for multihead attention, so:
-
-               d_model                  d_k                 d_k
-            *-----------*            *--------*           *--------*
-            |           |            |        |           |        |
-    seq_len |           |    d_model |        |   seq_len |        |
-            |     Q     |            | W_i^Q  |           |  Q_i'  |
-            |           | DOT        |        | =         |        |
-            |           |            |        |           |        |
-            *-----------*            *--------*           *--------*
-
-               d_model                  d_k                 d_k
-            *-----------*            *--------*           *--------*
-            |           |            |        |           |        |
-    seq_len |           |    d_model |        |   seq_len |        |
-            |     K     |            | W_i^K  |           |  K_i'  |
-            |           | DOT        |        | =         |        |
-            |           |            |        |           |        |
-            *-----------*            *--------*           *--------*
-
-               d_model                  d_k                 d_k
-            *-----------*            *--------*           *--------*
-            |           |            |        |           |        |
-    seq_len |           |    d_model |        |   seq_len |        |
-            |     V     |            | W_i^V  |           |  V_i'  |
-            |           | DOT        |        | =         |        |
-            |           |            |        |           |        |
-            *-----------*            *--------*           *--------*
-
-               d_k                                           seq_len
-            *--------*               seq_len               *-----------*
-            |        |            *------------*           |           |
-    seq_len |        |        d_k |            |   seq_len |           |
-            | Q_i^Q  |            |   K_i'^T   |           | scores_i  |
-            |        | DOT        |            | =         |           |
-            |        |            *------------*           |           |
-            *--------*                                     *-----------*
-
-               seq_len                  d_k                 d_k
-            *-----------*            *--------*           *--------*
-            |           |            |        |           |        |
-    seq_len |           |    seq_len |        |   seq_len |        |
-            | scores_i  |            |  V_i'  |           | head_i |
-            |           | DOT        |        | =         |        |
-            |           |            |        |           |        |
-            *-----------*            *--------*           *--------*
-
-"""
 
 class SelfAttention(nn.Module):
     def __init__(self, embed_size, num_heads):
@@ -76,30 +19,17 @@ class SelfAttention(nn.Module):
         self.fc_out     = nn.Linear(embed_size, embed_size)
 
     def forward(self, values, keys, query, mask):
-        """
-        values, keys, queries shape: (batch_size, seq_len, embed_size)
-        mask shape: (batch_size, 1, 1, seq_len) for some attention masking scenarios
-        """
-
         num_examples = query.shape[0] # number of training examples (aka batch size)
-
         value_len, key_len, query_len = values.shape[1], keys.shape[1], query.shape[1]
 
         values = self.values(values)  # (N, value_len, embed_size)
         keys = self.keys(keys)  # (N, key_len, embed_size)
         queries = self.queries(query)  # (N, query_len, embed_size)
 
-        values  = values.reshape(num_examples, value_len, self.num_heads, self.head_dim)
-        keys    =   keys.reshape(num_examples, key_len,   self.num_heads, self.head_dim)
-        queries =  query.reshape(num_examples, query_len, self.num_heads, self.head_dim)
+        values  = values.reshape(num_examples, self.num_heads, value_len, self.head_dim)
+        keys    =   keys.reshape(num_examples, self.num_heads, key_len,   self.head_dim)
+        queries =  queries.reshape(num_examples, self.num_heads, query_len, self.head_dim)
 
-        # queries shape: (num_examples, query_len, num_heads, head_dim)
-        # keys shape:    (num_examples, key_len,   num_heads, head_dim)
-        # scores shape:  (num_examples, num_heads, num_heads, key_len )
-
-        # scores = torch.einsum("nqhd, nkhd -> nhqk", [queries, keys])
-        # or equivalently... (for clarity, not speed)
-        # naive matmul
         scores = torch.zeros(
             (num_examples, self.num_heads, query_len, key_len),
             device=queries.device,
@@ -108,42 +38,33 @@ class SelfAttention(nn.Module):
         for n in range(num_examples):
             for h in range(self.num_heads):
                 # (query_len, head_dim) @ (head_dim, key_len) -> (query_len, key_len)
-                q = queries[n, :, h, :] # shape (query_len, head_dim)
-                k = keys[n, :, h, :] # shape (head_dim, key_len)
-                scores[n, h] = q @ k.transpose(0, 1)
+                q = queries[n, h, :, :] # shape (query_len, head_dim)
+                k = keys[n, h, :, :] # shape (key_len, head_dim)
+                scores[n, h] = q @ k.transpose(0, 1) # shape (query_len, key_len)
 
-        # queries shape: (num_examples, query_len, num_heads, head_dim)
-        # keys shape:    (num_examples, key_len,   num_heads, head_dim)
-        # scores:        (num_examples, num_heads, query_len, key_len)
-
-        # Causality: the transformer must only work with present or previously seen words.
         if mask is not None:
             scores = scores.masked_fill(mask == 0, float("-1e20"))
+        scaled_scores = torch.softmax(scores / (self.embed_size ** (1/2)), dim=3)
 
-        # Normalize the scores
-        attention = torch.softmax(scores / (self.embed_size ** (1/2)), dim=3)
-        # attention shape: (num_examples, num_heads, query_len, key_len)
-
-        out = torch.einsum("nhql, nlhd -> nqhd", [attention, values]).reshape(
-            num_examples, query_len, self.num_heads * self.head_dim
+        attention = torch.zeros(
+            (num_examples, self.num_heads, query_len, self.head_dim),
+            device = queries.device,
+            dtype=queries.dtype
         )
+        for n in range(num_examples):
+            for h in range(self.num_heads):
+                s = scaled_scores[n, h, :, :]
+                v = values[n, h, :, :]
+                attention[n, h] = s @ v
 
-        # attention shape: (num_examples, num_heads, query_len, key_len)
-        # values shape: (num_examples, value_len, num_heads, head_dim)
-        # out after matrix multiply: (N, query_len, num_heads, head_dim), then
-        # we reshape and flatten the last two dimensions.
-
+        # concatenate the heads back together
+        out = attention.reshape(num_examples, query_len, self.num_heads * self.head_dim)
         out = self.fc_out(out)
-        # out shape: (num_examples, query_len, embed_size)
-        
         return out
 
 
 
 class TransformerBlock(nn.Module):
-    # forward_expansion multiplies the embedding size in the
-    # feedforward network and allows it to operate in a larger hidden space
-    # before projecting back down to original embedding size
     def __init__(self, embed_size, num_heads, dropout, forward_expansion):
         super().__init__()
         self.attention = SelfAttention(embed_size, num_heads)
@@ -196,16 +117,6 @@ class Encoder(nn.Module):
     def forward(self, x, mask):
         num_examples, seq_len = x.shape
         positions = torch.arange(0, seq_len).expand(num_examples, seq_len).to(self.device)
-        # example:
-        # positions = torch.arange(0, 5)
-        #   [0, 1, 2, 3, 4]
-        # positions = positions.expand(3, 5) 
-        #   tensor([
-        #       [0, 1, 2, 3, 4],
-        #       [0, 1, 2, 3, 4],
-        #       [0, 1, 2, 3, 4]
-        #   ])
-        #
         out = self.dropout(
             (self.word_embedding(x) + self.position_embedding(positions))
         )
@@ -316,15 +227,7 @@ class Transformer(nn.Module):
         self.device = device
 
     def make_src_mask(self, src):
-        # src_mask = (src != self.src_pad_idx).unsqueeze(1).unsqueeze(2)
-        # (num_examples, 1, 1, src_len)
-
-        # or equivalently...
-
-        # boolean mask where True means "not a padding element"
         src_mask = (src != self.src_pad_idx)
-
-        # reshape from (N, src_len) to (N, 1, 1, src_len)
         src_mask = src_mask[:, None, None, :]
         return src_mask.to(self.device)
 
@@ -343,14 +246,14 @@ class Transformer(nn.Module):
         out = self.decoder(trg, enc_src, src_mask, trg_mask)
         return out
 
-def setup_seed(seed):
-    np.random.seed(seed)                          
-    np.random.seed(seed)                       
-    torch.manual_seed(seed)                    
-    torch.cuda.manual_seed(seed)               
-    torch.cuda.manual_seed_all(seed)           
-    torch.backends.cudnn.deterministic = True  
 
+def setup_seed(seed):
+    np.random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
 
 if __name__ == "__main__":
     setup_seed(42)
