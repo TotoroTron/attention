@@ -34,9 +34,9 @@ class SelfAttention(nn.Module):
         value_len, key_len, query_len = values.shape[1], keys.shape[1], query.shape[1]
 
         # init Q K V
-        values  = self.values(values)  # (N, value_len, embed_size)
-        keys    = self.keys(keys)  # (N, key_len, embed_size)
-        queries = self.queries(query)  # (N, query_len, embed_size)
+        values  = self.values(values) # (num_examples, value_len, embed_size)
+        keys    = self.keys(keys)     # (num_examples, key_len, embed_size)
+        queries = self.queries(query) # (num_examples, query_len, embed_size)
 
         # slice up Q K V for multihead attention
         values  =   values.reshape(num_examples, self.num_heads, value_len, self.head_dim)
@@ -54,8 +54,8 @@ class SelfAttention(nn.Module):
         for n in range(num_examples):
             for h in range(self.num_heads):
                 # (query_len, head_dim) @ (head_dim, key_len) -> (query_len, key_len)
-                q = queries[n, h, :, :] # shape (query_len, head_dim)
-                k = keys[n, h, :, :] # shape (key_len, head_dim)
+                q = queries[n, h, :, :]              # shape (query_len, head_dim)
+                k = keys[n, h, :, :]                 # shape (key_len, head_dim)
                 scores[n, h] = q @ k.transpose(0, 1) # shape (query_len, key_len)
 
         # mask and scale scores
@@ -123,7 +123,6 @@ class Encoder(nn.Module):
         self.device = device
         self.word_embedding = nn.Embedding(src_vocab_size, embed_size)
         self.position_embedding = nn.Embedding(max_length, embed_size)
-
         self.layers = nn.ModuleList(
             [
                 TransformerBlock(
@@ -132,7 +131,6 @@ class Encoder(nn.Module):
                 for _ in range(num_layers)
             ]
         )
-
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask):
@@ -141,11 +139,9 @@ class Encoder(nn.Module):
         out = self.dropout(
             (self.word_embedding(x) + self.position_embedding(positions))
         )
-
         # In the Encoder, Q, K, V are all the same matrix
         for layer in self.layers:
             out = layer(out, out, out, mask)
-
         return out
 
 class DecoderBlock(nn.Module):
@@ -180,7 +176,6 @@ class Decoder(nn.Module):
         self.device = device
         self.word_embedding = nn.Embedding(trg_vocab_size, embed_size)
         self.positional_embedding = nn.Embedding(max_length, embed_size)
-
         self.layers = nn.ModuleList(
             [
                 DecoderBlock(embed_size, num_heads, forward_expansion, dropout, device)
